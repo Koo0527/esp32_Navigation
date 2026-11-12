@@ -1,4 +1,13 @@
-# esp32_Navigation —— 全场景 ESP32 随行智能导航与互联副屏
+<p align="center">
+  <img src="assets/logo.png" width="128" height="128" alt="esp32Nav Logo" style="border-radius: 28px; box-shadow: 0 8px 24px rgba(0,0,0,0.35);" />
+</p>
+
+<h1 align="center">esp32Nav</h1>
+
+<p align="center">
+  <b>全场景 ESP32 随行智能导航与互联副屏系统</b><br>
+  <i>Modern, Minimal & Connected Riding Companion</i>
+</p>
 
 <p align="center">
   <b><a href="README.md">简体中文</a></b> | <b><a href="README_EN.md">English</a></b>

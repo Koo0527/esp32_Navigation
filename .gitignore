@@ -1,4 +1,18 @@
-# Local tools, generated identities and output
+Ôªø# ================= Source Code Protection (Private / Unreleased) =================
+firmware/
+android/
+ios/
+scripts/
+tools/
+experiments/
+platformio.ini
+PUBLIC_EXPORT.json
+RELEASE_VERSION
+*.bat
+*.ps1
+*.command
+
+# ================= Local tools, generated identities and output =================
 .tools/
 output/
 **/.gradle/
@@ -22,14 +36,15 @@ output/
 .env
 .env.*
 private*
-# iOS generated dependencies and local signing
+
+# ================= iOS generated dependencies and local signing =================
 **/Pods/
 **/DerivedData/
 **/xcuserdata/
 *.xcuserstate
 .DS_Store
 
-# Public release outputs and signing profiles
+# ================= Public release outputs and signing profiles =================
 *.ipa
 *.xcarchive/
 *.mobileprovision
@@ -38,31 +53,25 @@ private*
 __pycache__/
 *.pyc
 
-# PlatformIO
+# ================= PlatformIO & IDE =================
 .pio/
 .vscode/
 compile_commands.json
-
-# Release outputs
-release/
-
-# IDE
 .idea/
+
+# ================= Release outputs =================
+release/
 
 *.pk8
 *.x509.pem
 *.idsig
 *.class
-
 *.ino.cpp
 
-
 firmware/releases/
+È´òÂæ∑KeyÁî≥ËØ∑‰ø°ÊÅØ.txt
 
-
-∏ﬂµ¬Key…Í«Î–≈œ¢.txt
-
-
+# ================= Private Todos & Notes =================
 TODOLIST.md
 todo.md
 todo/

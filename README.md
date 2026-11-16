@@ -129,6 +129,6 @@
 - **清野**：热情参与实车道路路测，针对转弯响应、缩放手势与视觉交互提出了宝贵实测建议。
 
 ### 开源许可证合规
-1. **本项目自研代码与文档**：本仓库中权利人自研的导航逻辑、现代 UI、自动化打包脚本遵循根目录 [LICENSE.md](LICENSE.md)，仅供个人非商业学习交流使用；
+1. **本项目自研代码与文档**：本仓库中权利人自研的导航逻辑、通讯协议、现代 UI、自动化打包脚本遵循根目录 [LICENSE.md](LICENSE.md)，仅供个人非商业学习交流使用；
 2. **角色表情引擎组件**：固件中的 `AvatarEngine.h` 与 `AvatarEngine.cpp` 源自开源项目，遵循 **[GNU Affero General Public License v3.0 (AGPL-3.0-or-later)](licenses/LICENSE-AGPL-3.0.txt)** 许可；
 3. **其他第三方库**：项目引用的 Arduino GFX、SensorLib 等分别遵循其原作者的开源许可证协议（详见 `licenses/` 目录）。

@@ -1,18 +1,4 @@
-﻿# ================= Source Code Protection (Private / Unreleased) =================
-firmware/
-android/
-ios/
-scripts/
-tools/
-experiments/
-platformio.ini
-PUBLIC_EXPORT.json
-RELEASE_VERSION
-*.bat
-*.ps1
-*.command
-
-# ================= Local tools, generated identities and output =================
+﻿# ================= Local tools, generated identities and output =================
 .tools/
 output/
 **/.gradle/

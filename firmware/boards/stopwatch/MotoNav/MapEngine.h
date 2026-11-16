@@ -2711,8 +2711,9 @@ void drawMapFrame() {
   // 基础缩放比例与车速放缓动态叠加：
   // 用户基础缩放（支持 0.1x ~ 1.0x 实用范围）
   float baseS = userMapScale;
-  // 车速放缓叠加系数：静止时为 1.0f，高速行驶(120+ km/h)时平滑拉远至 0.50f
-  float speedFactor = constrain(1.0f - (posKmh > 0 ? posKmh : 0) * 0.0042f, 0.50f, 1.0f);
+  // 车速放缓叠加系数：低倍率下保底 0.72f 避免视野过远超出单块 2.2km 前瞻范围，高速高倍率下最多拉远至 0.58f
+  float speedFloor = (userMapScale <= 0.50f) ? 0.72f : 0.58f;
+  float speedFactor = constrain(1.0f - (posKmh > 0 ? posKmh : 0) * 0.0028f, speedFloor, 1.0f);
   float targetS = constrain(baseS * speedFactor, 0.08f, 1.00f);
   if (mapZoomActive) {
     // 双击按住滑动缩放时：45ms 极速响应紧贴手指，同时吸收离散触摸报点抖动

@@ -428,6 +428,7 @@ void setup() {
 
   iconBuf = (uint16_t *)ps_malloc(ICON_BUF_W * ICON_BUF_H * 2);   // v1.8.1 图标缓存
   buildRingLut();                                                   // v1.8.3 抗锯齿圆环查找表
+  rxq = (RxMsg *)ps_malloc(sizeof(RxMsg) * RXQ_SLOTS);
   mapInit();                                                        // v2.0 小地图缓冲
   for (int i = 0; i < IMG_SLOTS; i++) {
     imgs[i].show = (uint8_t *)ps_malloc(IMG_MAX);

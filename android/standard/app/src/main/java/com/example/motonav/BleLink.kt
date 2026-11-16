@@ -145,7 +145,7 @@ object BleLink {
     @Volatile var screenMhz = -1
     @Volatile var screenFast = -1
     private var inFlight = 0
-    private const val MAX_IN_FLIGHT = 6
+    private const val MAX_IN_FLIGHT = 3
     private var writeStartedAt = 0L
     private var lastWriteAt = 0L
 

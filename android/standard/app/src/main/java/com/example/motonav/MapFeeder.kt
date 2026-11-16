@@ -36,7 +36,7 @@ object MapFeeder {
     private const val AHEAD = 450.0            // 新地图块中心往前方偏移，前面的路多下载一些
     const val MAX_BYTES = 190_000              // 圆屏地图缓冲 200KB，留余量
     const val MAX_FEAT = 7000
-    private const val RESEND_MS = 8000L
+    private const val RESEND_MS = 4500L
 
     const val TYPE_CHUNK = 1
     const val TYPE_ROUTE = 2
@@ -100,6 +100,19 @@ object MapFeeder {
     @Volatile var userZoom = 0.70
         private set
     private var nackCount = 0
+
+    // 蓝牙地图块传输与带宽统计（用于评估压缩率、实测吞吐与高速切块冗余）
+    private var bleTxChunks = 0
+    private var bleAckChunks = 0
+    private var bleNackChunks = 0
+    private var bleResendChunks = 0
+    private var bleTotalWireBytes = 0L
+    private var bleTotalPlainBytes = 0L
+    private var bleTotalDeliveryMs = 0L
+    private var lastPlainBytes = 0
+    private var lastDeliveryMs = 0L
+    private var lastThroughputKBps = 0.0
+    private var lastPackMode = ""
 
     fun setUserZoom(z: Double) {
         userZoom = z.coerceIn(0.10, 1.00)
@@ -469,7 +482,7 @@ object MapFeeder {
         if (offline!=null) {
             routeProgress=offline.plan.progress(x,y,routeProgress)
             val onRoute=offline.plan.at(routeProgress)
-            val index=offline.plan.target(routeProgress,!haveConfirmedChunk || kmh<4)
+            val index=offline.plan.target(routeProgress,!haveConfirmedChunk || kmh<4,kmh,userZoom)
             offline.update(index)
             if (kotlin.math.hypot(x-onRoute.x,y-onRoute.y)<400) target=offline.plan.nodes[index]
         }
@@ -657,8 +670,18 @@ object MapFeeder {
         val wire = if (chunkType == TYPE_RASTER) {
             RasterPacket.forWire(plain, if (haveConfirmedChunk && !confirmedSat && !chunkSat) confirmedRasterBytes else null, buildingMode(), BleLink.zmapSupported)
         } else plain
+        lastPlainBytes = plain.size
         lastWireBytes = wire.size
+        bleTxChunks++
+        bleTotalPlainBytes += plain.size
+        bleTotalWireBytes += wire.size
+        lastPackMode = when {
+            wire.size < plain.size / 2 -> "压缩/差分"
+            wire.size < plain.size -> "压缩"
+            else -> "全量"
+        }
         BleLink.sendBulk(chunkType, chunkId, wire)
+        android.util.Log.i("MotoNavBleStats", "TX #$chunkId mode=$lastPackMode wire=${wire.size}B plain=${plain.size}B ratio=${if (plain.isNotEmpty()) wire.size * 100 / plain.size else 100}% speed=${poseKmh}km/h")
     }
 
     // ================= 路线 =================
@@ -735,12 +758,26 @@ object MapFeeder {
         handler.post {
             if (!routeOnly() && type == chunkType && id == chunkId) {
                 nackCount = 0
-                if (!chunkAcked) baseDeliverySeconds = ((now() - chunkDeliveryStart) / 1000.0).coerceIn(0.2, 60.0)
+                if (!chunkAcked) {
+                    val delMs = (now() - chunkDeliveryStart).coerceAtLeast(50L)
+                    baseDeliverySeconds = (delMs / 1000.0).coerceIn(0.2, 60.0)
+                    lastDeliveryMs = delMs
+                    bleAckChunks++
+                    bleTotalDeliveryMs += delMs
+                    lastThroughputKBps = (lastWireBytes / 1024.0) / (delMs / 1000.0)
+                    val avgKBps = if (bleTotalDeliveryMs > 0) (bleTotalWireBytes / 1024.0) / (bleTotalDeliveryMs / 1000.0) else 0.0
+                    val budgetS = if (poseKmh >= 10) RouteMapPlan.STEP / (poseKmh / 3.6) else 999.0
+                    val spareS = budgetS - (delMs / 1000.0) - baseBuildSeconds
+                    android.util.Log.i(
+                        "MotoNavBleStats",
+                        "ACK #$chunkId del=${delMs}ms wire=${lastWireBytes}B tp=${"%.1f".format(lastThroughputKBps)}KB/s avg=${"%.1f".format(avgKBps)}KB/s ack=$bleAckChunks tx=$bleTxChunks resend=$bleResendChunks nack=$bleNackChunks budget=${"%.1f".format(budgetS)}s spare=${"%.1f".format(spareS)}s"
+                    )
+                }
                 chunkAcked = true
                 haveConfirmedChunk = true; confirmedCx = chunkCx; confirmedCy = chunkCy; confirmedSat = chunkSat
                 confirmedHalf = chunkHalf
                 if (type == TYPE_RASTER) confirmedRasterBytes = chunkSentPlainBytes
-                val pendingBld = pendingBuildingBytes
+                val pendingBld = if (poseKmh >= 80) null.also { pendingBuildingBytes = null } else pendingBuildingBytes
                 if (pendingBld != null) {
                     pendingBuildingBytes = null
                     chunkBytes = pendingBld
@@ -759,7 +796,7 @@ object MapFeeder {
                 if (maps!=null && enabled && !fetching) {
                     val progress=if (havePose) maps.plan.progress(poseX,poseY,routeProgress) else 0.0
                     val point=maps.plan.at(progress)
-                    val node=maps.plan.nodes[maps.plan.target(progress,!havePose || poseKmh<4)]
+                    val node=maps.plan.nodes[maps.plan.target(progress,!havePose || poseKmh<4,poseKmh,userZoom)]
                     if ((!havePose || kotlin.math.hypot(poseX-point.x,poseY-point.y)<400) &&
                         (kotlin.math.abs(node.x-chunkCx)>1 || kotlin.math.abs(node.y-chunkCy)>1 ||
                             (buildingMode() && !chunkBuildingsComplete && maps.read(node)!=null)))
@@ -775,6 +812,7 @@ object MapFeeder {
     fun onNack(type: Int, id: Int) {
         handler.post {
             if (!routeOnly() && type == chunkType && id == chunkId) {
+                bleNackChunks++
                 nackCount++
                 haveConfirmedChunk = false
                 confirmedRasterBytes = null
@@ -818,6 +856,7 @@ object MapFeeder {
     private fun checkResend() {
         if (!BleLink.isConnected || BleLink.bulkPending()) return
         if (chunkBytes != null && !chunkAcked && now() - chunkSentAt > RESEND_MS) {
+            bleResendChunks++
             haveConfirmedChunk = false
             confirmedRasterBytes = null
             sendChunk()
@@ -835,15 +874,47 @@ object MapFeeder {
         BleLink.bulkProgress(chunkType,chunkId) ?: -1,fetching,
         lastFetchFail>0 && (status.contains("失败") || status.contains("内存不足")),haveConfirmedChunk && chunkAcked)
 
+    fun bleStatsCompact(): String {
+        if (bleTxChunks <= 0) return ""
+        val ratioPct = if (lastPlainBytes > 0) (lastWireBytes * 100 / lastPlainBytes) else 100
+        val budgetS = if (poseKmh >= 10) RouteMapPlan.STEP / (poseKmh / 3.6) else 0.0
+        val spareS = if (budgetS > 0) budgetS - (lastDeliveryMs / 1000.0) - baseBuildSeconds else 0.0
+        val spareText = when {
+            bleAckChunks == 0 -> "待确认"
+            budgetS <= 0 -> "均速${"%.0f".format(if (bleTotalDeliveryMs > 0) (bleTotalWireBytes / 1024.0) / (bleTotalDeliveryMs / 1000.0) else 0.0)}KB/s"
+            spareS < 2.0 -> "吃紧(${"%.1f".format(spareS)}s)"
+            else -> "冗余+${"%.1f".format(spareS)}s"
+        }
+        return "蓝牙 发${bleTxChunks}/收${bleAckChunks}/重${bleResendChunks} · " +
+            "${"%.0f".format(lastWireBytes / 1024.0)}/${"%.0f".format(lastPlainBytes / 1024.0)}KB(${ratioPct}%) · " +
+            "${"%.1f".format(lastDeliveryMs / 1000.0)}s(${"%.1f".format(lastThroughputKBps)}KB/s) · $spareText"
+    }
+
     fun infoText(): String =
         if (!enabled) "已关闭" else if (routeOnly()) "龙珠雷达：绿色网格，无底图下载与传输\n$routeInfo${if (routeAcked) "（圆屏已确认）" else ""}" else "来源：${sourceName()}　$status\n$chunkInfo${if (lastWireBytes > 0) "（传输 ${maxOf(1, lastWireBytes / 1024)} KB）" else ""}${if (chunkAcked) "（圆屏已确认）" else ""}\n" +
             "$routeInfo${if (routeAcked) "（圆屏已确认）" else ""}\n" + offlineStatus() + "\n" + coverageInfo()
 
     private fun coverageInfo(): String {
-        if (!haveConfirmedChunk || !havePose) return "地图覆盖：等待圆屏确认"
+        val avgKBps = if (bleTotalDeliveryMs > 0) (bleTotalWireBytes / 1024.0) / (bleTotalDeliveryMs / 1000.0) else 0.0
+        val ratioPct = if (lastPlainBytes > 0) (lastWireBytes * 100 / lastPlainBytes) else 100
+        val budgetS = if (poseKmh >= 10) RouteMapPlan.STEP / (poseKmh / 3.6) else 0.0
+        val spareS = if (budgetS > 0) budgetS - (lastDeliveryMs / 1000.0) - baseBuildSeconds else 0.0
+        val evalText = when {
+            bleAckChunks == 0 -> "等待首块统计"
+            budgetS <= 0 -> "均速 ${"%.1f".format(avgKBps)} KB/s"
+            spareS < 2.0 -> "带宽吃紧(余量 ${"%.1f".format(spareS)}s)"
+            else -> "冗余充足(余量 +${"%.1f".format(spareS)}s)"
+        }
+        val bleStatLine = if (bleTxChunks > 0) {
+            "\n蓝牙统计：发${bleTxChunks}/收${bleAckChunks}/重传${bleResendChunks}/NACK${bleNackChunks} · " +
+                "上块 ${"%.1f".format(lastWireBytes / 1024.0)}/${"%.1f".format(lastPlainBytes / 1024.0)}KB(${ratioPct}% $lastPackMode) · " +
+                "${"%.1f".format(lastDeliveryMs / 1000.0)}s(${"%.1f".format(lastThroughputKBps)}KB/s) · $evalText"
+        } else ""
+        if (!haveConfirmedChunk || !havePose) return "地图覆盖：等待圆屏确认$bleStatLine"
         val distance = maxOf(kotlin.math.abs(poseX - confirmedCx), kotlin.math.abs(poseY - confirmedCy))
-        val margin = (confirmedHalf - MapCoveragePolicy.viewRadius(150) - distance).roundToInt()
+        val margin = (confirmedHalf - MapCoveragePolicy.viewRadius(150, userZoom) - distance).roundToInt()
         return "已确认覆盖 ${(confirmedHalf * 2).roundToInt()} 米，可见余量 $margin 米\n" +
-            "普通图构建 ${(baseBuildSeconds * 10).roundToInt() / 10.0} 秒，确认 ${(baseDeliverySeconds * 10).roundToInt() / 10.0} 秒，准备预留 ${basePreparationSeconds().roundToInt()} 秒"
+            "普通图构建 ${(baseBuildSeconds * 10).roundToInt() / 10.0} 秒，确认 ${(baseDeliverySeconds * 10).roundToInt() / 10.0} 秒，准备预留 ${basePreparationSeconds().roundToInt()} 秒" +
+            bleStatLine
     }
 }

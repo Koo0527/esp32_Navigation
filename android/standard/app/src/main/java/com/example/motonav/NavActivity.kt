@@ -679,7 +679,13 @@ class NavActivity : AppCompatActivity() {
 
     private fun update() {
         updateBicyclePolyline()
-        mapStatus.text = MapFeeder.loadingStatus() + "\n" + if (emulate) "模拟导航 · 不记录轨迹" else RideRecorder.status()
+        val bleStats = MapFeeder.bleStatsCompact()
+        val subLine = if (emulate) "模拟导航 · 不记录轨迹" else RideRecorder.status()
+        mapStatus.text = buildString {
+            append(MapFeeder.loadingStatus())
+            if (bleStats.isNotEmpty()) append('\n').append(bleStats)
+            append('\n').append(subLine)
+        }
         val B = NaviBridge
         // v4.9 更快路线提示
         if (B.uiSuggestMin > 0) {

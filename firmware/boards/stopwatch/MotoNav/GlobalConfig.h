@@ -61,10 +61,10 @@ volatile bool bleConnected = false;
 String pendingEvt = "";
 
 // ===== 接收队列：蓝牙线程收到的每个数据包原样放进队列，主循环再取出处理 =====
-#define RXQ_SLOTS 48   // v2.0 加大，接收地图大块数据时不丢包
+#define RXQ_SLOTS 256  // 扩大接收队列至 256 槽（PSRAM 分配），彻底杜绝高速收图丢包重传
 #define RXQ_MAX   512
 struct RxMsg { uint16_t len; uint8_t data[RXQ_MAX]; };
-RxMsg rxq[RXQ_SLOTS];
+RxMsg *rxq = nullptr;
 volatile int rxHead = 0, rxTail = 0;
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 

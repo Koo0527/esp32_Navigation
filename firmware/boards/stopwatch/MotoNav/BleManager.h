@@ -198,6 +198,7 @@ class RxCB : public BLECharacteristicCallbacks {
       return;
     }
     if (n > RXQ_MAX) n = RXQ_MAX;
+    if (!rxq) return;
     portENTER_CRITICAL(&mux);
     int next = (rxHead + 1) % RXQ_SLOTS;
     if (next == rxTail) rxTail = (rxTail + 1) % RXQ_SLOTS;   // 队列满：丢掉最旧的一条

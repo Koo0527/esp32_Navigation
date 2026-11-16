@@ -76,9 +76,9 @@ class RouteOfflineMaps(private val ctx: Context, val frame: MapGeo.Frame, val pl
             while (!closed) {
                 if (foregroundBusy() || System.currentTimeMillis()<retryAt) { Thread.sleep(250); continue }
                 val wanted=target
-                // 节能温控优化：采用滑动窗口机制，仅向前预计算最多 2 块（覆盖约 4~5 公里，足够行驶 10~15 分钟）
-                // 杜绝规划或出发时一次性狂算全线数十块导致 CPU 持续 100% 满载积热严重发烫！
-                val lookAheadMax = minOf(wanted + 2, ready.lastIndex)
+                // 弱网与温控平衡：滑动窗口预加载前方最多 6 块（约 12~15 公里），
+                // 避免长时间进入隧道或无信号区域断档；紧邻两块快速预热，远端温和节流避免积热。
+                val lookAheadMax = minOf(wanted + 6, ready.lastIndex)
                 val index = (wanted..lookAheadMax).firstOrNull { !ready[it] }
                 if (index == null) {
                     val count = ready.count { it }
@@ -98,8 +98,8 @@ class RouteOfflineMaps(private val ctx: Context, val frame: MapGeo.Frame, val pl
                     if (closed) return@execute
                     store(node,r.bytes); ready[index]=true; onReady(node)
                     retryAt=0L
-                    // 优先快速预热当前及下一块，之后温和节流降温
-                    Thread.sleep(if (index <= wanted + 1) 150L else 600L)
+                    // 优先快速预热当前及下一块，远端预加载块温和节流降温
+                    Thread.sleep(if (index <= wanted + 1) 150L else 800L)
                 } catch (_: CancellationException) { Thread.sleep(250) }
                 catch (e: IOException) { status="沿线离线地图：$count/${ready.size} 块，${e.message}（稍后重试）"; retryAt=System.currentTimeMillis()+15000 }
                 catch (e: Exception) { status="沿线离线地图：$count/${ready.size} 块，下载未完成（稍后重试）"; retryAt=System.currentTimeMillis()+5000 }

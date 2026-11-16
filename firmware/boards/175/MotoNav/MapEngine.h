@@ -76,6 +76,7 @@ int rasBW = 0;                          // 每行多少个小块
 uint8_t *rasterBuf = nullptr;           // 每像素 4 位颜色编号
 bool rasterValid = false;
 uint8_t *rasterBackBuf = nullptr;
+uint8_t *rasterUnpackBuf = nullptr;
 RasterHeader rasterBackHeader = {};
 bool rasterBackValid = false;
 uint16_t rasterBackPal[16];
@@ -163,6 +164,8 @@ void mapInit() {
   ghostY = (int32_t *)ps_malloc(sizeof(int32_t) * GHOST_PTS);
   gbBox  = (int32_t *)ps_malloc(sizeof(int32_t) * 4 * (GHOST_PTS / RB_STEP + 2));
   rasterBuf = (uint8_t *)ps_malloc(RASTER_BUF_BYTES);
+  rasterBackBuf = (uint8_t *)ps_malloc(RASTER_BUF_BYTES);
+  rasterUnpackBuf = (uint8_t *)ps_malloc(RASTER_MAX_BYTES);
   bulks[5].cap = CROSS_MAX_BYTES; bulks[5].buf = (uint8_t *)ps_malloc(CROSS_MAX_BYTES);
   if (!crossBuf) crossBuf = (uint16_t *)ps_malloc(CROSS_BUF_BYTES);
   bulks[6].cap = COVER_MAX_BYTES; bulks[6].buf = (uint8_t *)ps_malloc(COVER_MAX_BYTES);
@@ -296,9 +299,11 @@ void parseViceGeometry(const uint8_t *p, uint32_t len, uint32_t pos, int bw, int
     size_t needed = cellsBytes + (size_t)patchCount * 8;
     if (packed == len - pos - header && needed <= RASTER_BUF_BYTES * 4 + 2047 * 8) {
       if (rasterAllocatedBytes != needed) {
+        uint8_t *newBuf = (uint8_t *)ps_malloc(needed);
+        if (!newBuf) return;
         free(rasterBuf);
-        rasterBuf = (uint8_t *)ps_malloc(needed);
-        rasterAllocatedBytes = rasterBuf ? needed : 0;
+        rasterBuf = newBuf;
+        rasterAllocatedBytes = needed;
       }
       rasterVice = (uint16_t *)rasterBuf;
       if (!viceInflater) viceInflater = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
@@ -378,9 +383,14 @@ void parseRasterLegacy(const uint8_t *p, uint32_t len) {
   if (!rasterViceValid) {
     // 不带扩展的地图、卫星图或扩展解码失败，回到原来的 4 位格式。
     if (!rasterBuf || rasterAllocatedBytes != RASTER_BUF_BYTES) {
-      free(rasterBuf);
-      rasterBuf = (uint8_t *)ps_malloc(RASTER_BUF_BYTES);
-      rasterAllocatedBytes = rasterBuf ? RASTER_BUF_BYTES : 0;
+      uint8_t *newBuf = (uint8_t *)ps_malloc(RASTER_BUF_BYTES);
+      if (newBuf) {
+        free(rasterBuf);
+        rasterBuf = newBuf;
+        rasterAllocatedBytes = RASTER_BUF_BYTES;
+      } else if (!rasterBuf || rasterAllocatedBytes < legacyBytes) {
+        return;
+      }
     }
     rasterVice = nullptr;
     if (!rasterBuf) return;
@@ -418,15 +428,21 @@ bool parseRaster(const uint8_t *p, uint32_t len) {
   const uint8_t *src = p;
   uint32_t srcLen = len;
   uint8_t *unpacked = nullptr;
+  bool unpackedOwned = false;
   if (rasterHeaderCheck(p, len, probe, RASTER_MAX_PX, RASTER_BUF_BYTES) && probe.deflate) {
     if (len < probe.dataStart + 6) return false;
     uint32_t rawRleLen = rasterU32(p + probe.dataStart);
     uint32_t compLen = len - probe.dataStart - 4;
     if (rawRleLen == 0 || probe.dataStart + rawRleLen > RASTER_MAX_BYTES) return false;
-    unpacked = (uint8_t *)ps_malloc(probe.dataStart + rawRleLen);
+    if (rasterUnpackBuf && probe.dataStart + rawRleLen <= RASTER_MAX_BYTES) {
+      unpacked = rasterUnpackBuf;
+    } else {
+      unpacked = (uint8_t *)ps_malloc(probe.dataStart + rawRleLen);
+      unpackedOwned = true;
+    }
     if (!unpacked) return false;
     if (!viceInflater) viceInflater = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
-    if (!viceInflater) { free(unpacked); return false; }
+    if (!viceInflater) { if (unpackedOwned) free(unpacked); return false; }
     memcpy(unpacked, p, probe.dataStart);
     uint16_t cleanFlags = rasterU16(p + 14) & ~RASTER_FLAG_DEFLATE;
     unpacked[14] = (uint8_t)(cleanFlags & 0xFF);
@@ -437,7 +453,7 @@ bool parseRaster(const uint8_t *p, uint32_t len) {
         unpacked + probe.dataStart, unpacked + probe.dataStart, &outBytes,
         TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
     if (status != TINFL_STATUS_DONE || inBytes != compLen || outBytes != rawRleLen) {
-      free(unpacked);
+      if (unpackedOwned) free(unpacked);
       return false;
     }
     src = unpacked;
@@ -445,11 +461,11 @@ bool parseRaster(const uint8_t *p, uint32_t len) {
   }
   RasterHeader next;
   if (!rasterCheck(src,srcLen,next,RASTER_MAX_PX,RASTER_BUF_BYTES)) {
-    if (unpacked) free(unpacked);
+    if (unpackedOwned && unpacked) free(unpacked);
     return false;
   }
   if (next.dataEnd != srcLen) {
-    if (unpacked) { free(unpacked); return false; }
+    if (unpackedOwned && unpacked) { free(unpacked); return false; }
     // 保留既有轮廓扩展的兼容路径；新 App 只发送无扩展的普通底图。
     if (len-next.dataEnd<8 || p[next.dataEnd]!='V' || p[next.dataEnd+1]!='C' || p[next.dataEnd+2]!='E') return false;
     rasterBackValid=false;
@@ -463,7 +479,7 @@ bool parseRaster(const uint8_t *p, uint32_t len) {
         rasX0 == next.refX0 && rasY0 == next.refY0 &&
         rasterAllocatedBytes == RASTER_BUF_BYTES && rasterBuf != nullptr;
     if (!canDelta) {
-      if (unpacked) free(unpacked);
+      if (unpackedOwned && unpacked) free(unpacked);
       return false;
     }
   }
@@ -471,25 +487,28 @@ bool parseRaster(const uint8_t *p, uint32_t len) {
       rasterFrame == next.frame &&
       (uint16_t)lroundf(rasMpp * 1000) == next.mm &&
       abs(next.x0 - rasX0) <= 2 && abs(next.y0 - rasY0) <= 2;
-  if (sameArea) {
-    // 同坐标覆盖更新（如楼块第二包）：使用临时缓冲解码，完整保留 rasterBackBuf 中的上一位置旧底图用于边缘拼接
+  if (sameArea && rasterBuf && rasterAllocatedBytes == RASTER_BUF_BYTES) {
+    // 同坐标覆盖更新（如楼块第二包）：直接在 rasterBuf 原地解码，零额外 PSRAM 分配，彻底消除碎片化
+    rasterDecode(src, next, rasterBuf, next.delta ? rasterBuf : nullptr);
+    if (unpackedOwned && unpacked) free(unpacked);
+  } else if (sameArea) {
     uint8_t *tmpBuf = (uint8_t *)ps_malloc(RASTER_BUF_BYTES);
     if (!tmpBuf) {
-      if (unpacked) free(unpacked);
+      if (unpackedOwned && unpacked) free(unpacked);
       return false;
     }
     rasterDecode(src, next, tmpBuf, next.delta ? rasterBuf : nullptr);
-    if (unpacked) free(unpacked);
+    if (unpackedOwned && unpacked) free(unpacked);
     free(rasterBuf);
     rasterBuf = tmpBuf;
   } else {
     if (!rasterBackBuf) rasterBackBuf=(uint8_t *)ps_malloc(RASTER_BUF_BYTES);
     if (!rasterBackBuf) {
-      if (unpacked) free(unpacked);
+      if (unpackedOwned && unpacked) free(unpacked);
       return false;
     }
     rasterDecode(src,next,rasterBackBuf,next.delta ? rasterBuf : nullptr);
-    if (unpacked) free(unpacked);
+    if (unpackedOwned && unpacked) free(unpacked);
     RasterHeader old = {};
     old.frame=rasterFrame; old.x0=rasX0; old.y0=rasY0; old.width=rasW; old.height=rasH;
     old.mm=(uint16_t)lroundf(rasMpp*1000); old.blocksWide=rasBW;
@@ -498,7 +517,11 @@ bool parseRaster(const uint8_t *p, uint32_t len) {
     uint8_t *oldPixels=rasterBuf;
     rasterBuf=rasterBackBuf;
     rasterBackBuf=oldPixels;
-    if (rasterAllocatedBytes!=RASTER_BUF_BYTES) { free(rasterBackBuf); rasterBackBuf=nullptr; keep=false; }
+    if (!rasterBackBuf || rasterAllocatedBytes!=RASTER_BUF_BYTES) {
+      if (rasterBackBuf) free(rasterBackBuf);
+      rasterBackBuf=(uint8_t *)ps_malloc(RASTER_BUF_BYTES);
+      keep=false;
+    }
     rasterBackHeader=old; rasterBackValid=keep;
     rasterBackHasPal = keep && rasHasPal;
     if (rasterBackHasPal) memcpy(rasterBackPal, rasPal, sizeof(rasterBackPal));

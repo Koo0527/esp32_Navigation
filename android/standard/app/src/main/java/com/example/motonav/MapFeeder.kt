@@ -97,6 +97,14 @@ object MapFeeder {
     // 当前地图块
     private var chunkCx = 0.0
     private var chunkCy = 0.0
+    @Volatile var userZoom = 0.70
+        private set
+    private var nackCount = 0
+
+    fun setUserZoom(z: Double) {
+        userZoom = z.coerceIn(0.10, 1.00)
+    }
+
     private var haveChunk = false
     @Volatile private var fetching = false
     @Volatile private var capturing = false
@@ -468,7 +476,7 @@ object MapFeeder {
         val wanted=target
         val needs=if (wanted!=null) !haveChunk || chunkType!=TYPE_RASTER ||
             kotlin.math.abs(wanted.x-chunkCx)>1 || kotlin.math.abs(wanted.y-chunkCy)>1
-            else !haveChunk || MapCoveragePolicy.shouldRefresh(x-cx,y-cy,bearing,kmh,sat,basePreparationSeconds(),half)
+            else !haveChunk || MapCoveragePolicy.shouldRefresh(x-cx,y-cy,bearing,kmh,sat,basePreparationSeconds(),half,userZoom)
         // 已发出的普通图必须完整确认；下载后续地图不能冲掉正在传输的数据。
         if (!fetching && (!haveChunk || chunkAcked) && needs && (lastFetchFail==0L || now()-lastFetchFail>5000)) {
             val a=Math.toRadians(bearing.toDouble())
@@ -726,6 +734,7 @@ object MapFeeder {
     fun onAck(type: Int, id: Int) {
         handler.post {
             if (!routeOnly() && type == chunkType && id == chunkId) {
+                nackCount = 0
                 if (!chunkAcked) baseDeliverySeconds = ((now() - chunkDeliveryStart) / 1000.0).coerceIn(0.2, 60.0)
                 chunkAcked = true
                 haveConfirmedChunk = true; confirmedCx = chunkCx; confirmedCy = chunkCy; confirmedSat = chunkSat
@@ -762,12 +771,22 @@ object MapFeeder {
         }
     }
 
-    /** 圆屏回复 "N,类型,编号"：增量差分参考不匹配，清除参考底图并立刻重发全量压缩底图 */
+    /** 圆屏回复 "N,类型,编号"：增量差分参考不匹配，清除参考底图并立刻重发全量压缩底图；连续多次失败则放弃异常包重抓 */
     fun onNack(type: Int, id: Int) {
         handler.post {
             if (!routeOnly() && type == chunkType && id == chunkId) {
+                nackCount++
                 haveConfirmedChunk = false
                 confirmedRasterBytes = null
+                if (nackCount >= 3) {
+                    nackCount = 0
+                    haveChunk = false
+                    chunkAcked = true
+                    chunkBytes = null
+                    lastFetchFail = now()
+                    status = "圆屏底图解码异常，稍后重新抓取"
+                    return@post
+                }
                 chunkAcked = false
                 sendChunk()
             }

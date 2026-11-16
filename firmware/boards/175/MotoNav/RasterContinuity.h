@@ -107,7 +107,7 @@ static inline void rasterCopyReference(uint8_t *out, const uint8_t *ref, const R
   }
 }
 static inline void rasterDecode(const uint8_t *p, const RasterHeader &h, uint8_t *out, const uint8_t *ref = nullptr) {
-  if (h.delta && ref) rasterCopyReference(out,ref,h);
+  if (h.delta && ref) { if (out != ref) rasterCopyReference(out,ref,h); }
   else memset(out,0,h.bytes);
   uint32_t pos=h.dataStart, i=0, n=(uint32_t)h.width*h.height;
   int x=0,y=0;

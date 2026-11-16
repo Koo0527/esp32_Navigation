@@ -146,6 +146,10 @@ object CallWatcher {
                 val b = p.getOrNull(2)?.toIntOrNull() ?: return
                 main.post { Brightness.syncFromDevice(b) }
             }
+            "ZOOM" -> {
+                val pct = p.getOrNull(2)?.toIntOrNull() ?: return
+                main.post { MapFeeder.setUserZoom(pct / 100.0) }
+            }
         }
     }
 

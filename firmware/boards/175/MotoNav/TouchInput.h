@@ -447,6 +447,7 @@ void touchPoll() {
         userMapScale = nextScale;
       }
       CompanionMode::startVibration(90, 35);
+      if (bleConnected) pendingEvt = "T,ZOOM," + String((int)lroundf(userMapScale * 100.0f));
       navDirty = true;
     } else if (page == 0 && (inNav || cruiseOn || mapModeActive()) && !callOn && !pairOn && !fxOn) {
       float vx = touchX1 - touchX0, vy = touchY1 - touchY0;

@@ -479,7 +479,7 @@ void handleText(const String &m) {
     if (r == 1 || r == 2) { trailMode = r; navDirty = true; }
     return;
   }
-  if (m.startsWith("#m,")) { mapOn = m.substring(3).toInt() != 0; navDirty = true; return; }
+  if (m.startsWith("#m,")) { mapOn = m.substring(3).toInt() != 0; navDirty = true; if (mapOn && bleConnected && pendingEvt.length() == 0) pendingEvt = "T,ZOOM," + String((int)lroundf(userMapScale * 100.0f)); return; }
   if (m.startsWith("#b,")) {
     int b = constrain(m.substring(3).toInt(), 5, 255);
     if (flushDone) {                                    // v2.2 刷屏任务在用总线时先等它推完

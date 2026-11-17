@@ -1,0 +1,61 @@
+name: Build unsigned iOS IPA
+
+# Manual-only build: compiles the iOS app on a macOS runner and uploads an
+# unsigned IPA. It never creates tags or GitHub Releases.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcodebuild -showsdks | grep -i iphoneos || true
+
+      - name: Install CocoaPods 1.16.2
+        run: |
+          sudo gem install cocoapods -v 1.16.2 --no-document
+          pod --version
+
+      - name: Install locked pods
+        working-directory: ios
+        run: pod _1.16.2_ install --deployment
+
+      # build-ios-ipa.sh compares RELEASE_VERSION with Xcode MARKETING_VERSION.
+      # The repo currently has 0.13.8 vs 0.15.0, so align them on the runner only.
+      - name: Align RELEASE_VERSION with MARKETING_VERSION
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -m1 'MARKETING_VERSION = ' ios/MotoNav.xcodeproj/project.pbxproj \
+            | sed -E 's/.*MARKETING_VERSION = ([^;]+);.*/\1/' | tr -d '[:space:]')
+          echo "MARKETING_VERSION=$VERSION"
+          printf '%s' "$VERSION" > RELEASE_VERSION
+          echo "RELEASE_VERSION=$(cat RELEASE_VERSION)"
+
+      - name: Build unsigned IPA
+        run: ./scripts/build-ios-ipa.sh
+
+      - name: List build outputs
+        run: ls -lh output/ios
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: motonav-ios-unsigned
+          path: |
+            output/ios/*.ipa
+            output/ios/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
